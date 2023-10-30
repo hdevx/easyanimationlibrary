@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Triangulate Image</title>
+    <script async src="./lib/4.x_opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
+    <script src="./lib/delaunay.v6.min.js"></script>
+
+</head>
+<body>
+    <input type="file" id="inputImage" onchange="processImage(event)">
+    <canvas id="canvas"></canvas>
+</body>
+
+<script>
+function onOpenCvReady() {
+    document.getElementById('inputImage').disabled = false;
+}
+
+let edges = [];
+let points = []; 
+let triangles = [];
+
+function processImage(event) {
+    let canvas = document.getElementById('canvas');
+    let ctx = canvas.getContext('2d');
+    let img = new Image();
+
+    img.onload = function() {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0, img.width, img.height);
+        let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+        let src = cv.imread(canvas);
+        edges = getCannyEdges(src);
+        points = samplePoints(src, edges);
+        triangles = triangulate(points, imageData);
+
+        
+
+        drawTriangles(ctx, triangles);
+    };
+
+    img.src = URL.createObjectURL(event.target.files[0]);
+}
+
+
+
+function getCannyEdges(src) {
+    let dst = new cv.Mat();
+    let lowThreshold = 50;
+    let highThreshold = 150;
+    cv.cvtColor(src, src, cv.COLOR_RGBA2GRAY, 0);
+    cv.Canny(src, dst, lowThreshold, highThreshold, 3, false);
+    return dst;
+}
+
+function samplePoints(image, edges) {
+    let edgePoints = [];
+    let interiorPoints = [];
+    const stepSize = 50;
+    const totalTriangles = 200; // Target number of triangles
+    const maxInteriorPoints = totalTriangles - edgePoints.length / 3; // Estimation
+
+    const edgeSamplingRate = 15; // Take every 5th edge point //make sure image width/value 512/15
+let edgeCounter = 0;
+    // Get Edge Points
+    for (let i = 0; i < edges.rows; i++) {
+        for (let j = 0; j < edges.cols; j++) {
+            let pixelValue = edges.ucharPtr(i, j)[0];
+            if (pixelValue > 0) {
+            edgeCounter++;
+            if (edgeCounter % edgeSamplingRate === 0) {
+                edgePoints.push([j, i]);
+            }
+        }
+        }
+    }
+
+    // Get Interior Points
+    // for (let i = 0; i < image.cols; i += stepSize) {
+    //     for (let j = 0; j < image.rows; j += stepSize) {
+    //         interiorPoints.push([i, j]);
+    //     }
+    // }
+
+    // Subsample the interior points to meet the triangle count target
+    // You might want to replace this random sampling with a more strategic approach
+    while (interiorPoints.length > maxInteriorPoints) {
+        interiorPoints.splice(Math.floor(Math.random() * interiorPoints.length), 1);
+    }
+    console.log("Edge points:", edgePoints.length);
+console.log("Interior points:", interiorPoints.length);
+    return [...edgePoints, ...interiorPoints];
+}
+
+function isEdgePoint(edges, point) {
+    return edges.at(point.y, point.x) > 0;
+}
+
+function triangulate(points, imageData) {
+    const delaunay = d3.Delaunay.from(points);
+    const triangles = delaunay.triangles;
+
+    let result = [];
+    for (let i = 0; i < triangles.length; i += 3) {
+        result.push([
+            points[triangles[i]],
+            points[triangles[i + 1]],
+            points[triangles[i + 2]]
+        ]);
+    }
+    console.log("result", result.length );
+    let validTriangles = result.filter(triangle => !triangleHasTransparentCentroid(imageData, triangle));   
+    console.log("validTriangles", validTriangles.length );
+    
+    return validTriangles;
+}
+
+function triangleCentroid(triangle) {
+    let x = (triangle[0][0] + triangle[1][0] + triangle[2][0]) / 3;
+    let y = (triangle[0][1] + triangle[1][1] + triangle[2][1]) / 3;
+    return [x, y];
+}
+
+function triangleHasTransparentCentroid(imageData, triangle) {
+    let centroid = triangleCentroid(triangle);
+    return isTransparent(imageData, Math.round(centroid[0]), Math.round(centroid[1]));
+}
+function isTransparent(imageData, x, y) {
+    let index = (y * imageData.width + x) * 4;
+    let alpha = imageData.data[index + 3];  // The alpha channel
+    return alpha === 0;   // 0 means fully transparent
+}
+
+function drawTriangles(canvasContext, triangles) {
+    canvasContext.strokeStyle = '#FF0000';  // Make the line red
+    triangles.forEach((triangle) => {
+        canvasContext.beginPath();
+        canvasContext.moveTo(triangle[0][0], triangle[0][1]);
+        canvasContext.lineTo(triangle[1][0], triangle[1][1]);
+        canvasContext.lineTo(triangle[2][0], triangle[2][1]);
+        canvasContext.closePath();
+        canvasContext.stroke();
+        // console.log(triangle[0][0], triangle[0][1]);
+        console.log("draw triangle");
+    });
+}
+
+
+</script>
+</html>
+
+
+
+
+
